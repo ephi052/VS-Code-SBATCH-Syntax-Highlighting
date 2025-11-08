@@ -7,6 +7,7 @@ This extension provides syntax highlighting and job submission features for `.sb
 
 - Syntax highlighting for `.sbatch` files, including differentiation between active `#SBATCH` commands and commented `##SBATCH` lines.
 - Right-click on `.sbatch` files to submit a SLURM job directly from VS Code.
+- Right-click on `.sbatch` files to list all jobs (active and historical) submitted from that file.
 - File icon for `.sbatch` files for easy identification.
 
 ## Installation
@@ -16,7 +17,9 @@ This extension provides syntax highlighting and job submission features for `.sb
 ## How to Use
 
 1. Open any `.sbatch` file in VS Code to see syntax highlighting.
-2. Right-click on the `.sbatch` file in the file explorer and select **Submit a SLURM Job from This File** to submit the job.
+2. Right-click on the `.sbatch` file in the file explorer and select:
+   - **Submit a SLURM Job from This File** to submit the job
+   - **List Submitted Jobs from This File** to view active and historical jobs from this script
 
 ### Syntax Highlighting
 
@@ -27,14 +30,29 @@ This extension provides syntax highlighting and job submission features for `.sb
 - General comments are highlighted in **green**.
 - The rest of the text follows standard **bash** syntax colors.
 
+### Job Management
+
+![List Jobs](https://github.com/ephi052/VS-Code-SBATCH-Syntax-Highlighting/blob/main/images/list-jobs.png)
+
+View all SLURM jobs (active and historical) submitted from a specific `.sbatch` file. Click on active job rows to cancel them with `scancel`.
+
 ## Requirements
 
-Make sure `sbatch` (the SLURM command) is available in your system's PATH.
+Make sure `sbatch` and `squeue` (SLURM commands) are available in your system's PATH.
 
 ## Release Notes
 
 For build instructions, see [build.md](./build.md)
 For the license, see [LICENSE](./LICENSE.md)
+
+See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
+
+### 0.0.2
+- Improved syntax highlighting for SLURM directives with better argument parsing
+- Added language icon for `.sbatch` files
+- New command to list active jobs submitted from a specific file
+- Removed full icon theme (now using built-in language icon)
+
 ### 0.0.1
 - Initial release with syntax highlighting and SLURM job submission command.
 

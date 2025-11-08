@@ -37,12 +37,21 @@
       {
         "command": "sbatch.submitSlurmJob",
         "title": "Submit a SLURM Job from This File"
+      },
+      {
+        "command": "sbatch.listSubmittedJobs",
+        "title": "List Submitted Jobs from This File"
       }
     ],
     "menus": {
       "explorer/context": [
         {
           "command": "sbatch.submitSlurmJob",
+          "when": "resourceExtname == .sbatch",
+          "group": "navigation"
+        },
+        {
+          "command": "sbatch.listSubmittedJobs",
           "when": "resourceExtname == .sbatch",
           "group": "navigation"
         }

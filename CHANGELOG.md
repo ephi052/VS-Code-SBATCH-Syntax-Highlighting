@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [0.0.2] - 2025-11-08
 ### Added
 - Language icon for `.sbatch` files without requiring an external icon theme. (Thanks @Antyos)
+- New command **List Submitted Jobs from This File** to view all jobs (active via `squeue` and historical via `sacct`) submitted from a specific `.sbatch` file.
+- Interactive webview to display job details with ability to cancel active jobs by clicking on rows.
 
 ### Fixed
 - Improved syntax highlighting of arguments, strings, numbers, and placeholders in SLURM directives. (Thanks @Antyos)
