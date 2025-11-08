@@ -22,7 +22,11 @@
         "id": "sbatch",
         "aliases": ["SBATCH", "sbatch"],
         "extensions": [".sbatch"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./images/svg/sbatch.svg",
+          "light": "./images/svg/sbatch.svg"
+        }
       }
     ],
     "grammars": [

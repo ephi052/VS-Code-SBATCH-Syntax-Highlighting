@@ -2,27 +2,62 @@
   "scopeName": "source.sbatch",
   "patterns": [
     {
-      "name": "keyword.control.sbatch", 
-      "match": "^#SBATCH\\b.*"
+      "begin": "^(#SBATCH)(\\s+(--[a-zA-Z-_]+)?\\s*(=)?)?",
+      "end": "$",
+      "beginCaptures": {
+        "1": {"name": "keyword.control.sbatch"},
+        "2": {"name": "meta.argument.sbatch"},
+        "3": {"name": "variable.parameter.sbatch"},
+        "4": {"name": "keyword.operator.assignment.sbatch"}
+      },
+      "contentName": "meta.argument.sbatch",
+      "patterns": [
+        {
+          "name": "constant.numeric.sbatch",
+          "match": "\\b\\d+(?:\\.\\d*)?\\b"
+        },
+        {
+          "name": "string.quoted.double.sbatch",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": {"name": "punctuation.definition.string.begin.sbatch"}
+          },
+          "endCaptures": {
+            "0": {"name": "punctuation.definition.string.end.sbatch"}
+          },
+          "patterns": [
+            {
+              "include": "#filename_variable"
+            }
+          ]
+        },
+        {
+          "include": "#filename_variable"
+        },
+        {
+          "name": "comment.line.sbatch",
+          "match": "#.*"
+        },
+        {
+          "name": "variable.other.sbatch",
+          "match": "\\w+"
+        }
+      ]
     },
     {
-      "name": "keyword.line.sbatch-param",  
-      "match": "^##SBATCH\\b.*"
-    },
-    {
-      "name": "variable.parameter.sbatch",
-      "match": "\\b(--[a-zA-Z-]+)\\b"
-    },
-    {
-      "name": "constant.numeric.sbatch",
-      "match": "\\b\\d+\\b"
-    },
-    {
-      "name": "string.quoted.sbatch",
-      "match": "\".*?\""
+      "name": "storage.type.disabled.sbatch meta.disabled.sbatch",
+      "match": "^##SBATCH\\b.*",
+      "comment": "This scope doesn't really make sense, but it does serve to highlight disabled SBATCH directives differently."
     },
     {
       "include": "source.shell"  
     }
-  ]
+  ],
+  "repository": {
+    "filename_variable": {
+      "name": "constant.character.format.placeholder.other.sbatch",
+      "match": "%\\d*[a-zA-Z%]"
+    }
+  }
 }
