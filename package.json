@@ -3,7 +3,7 @@
   "icon": "icon.png",
   "displayName": "SBATCH File Syntax Highlighter and SLURM Job Submission",
   "description": "Syntax highlighting and job submission for .sbatch files in SLURM.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "EphiCohen",
   "engines": {
     "vscode": "^1.75.0"
@@ -12,10 +12,7 @@
     "Programming Languages"
   ],
   "main": "./extension.js",
-  "activationEvents": [
-    "onLanguage:sbatch",
-    "onCommand:sbatch.submitSlurmJob"
-  ],
+  "activationEvents": [],
   "contributes": {
     "languages": [
       {
@@ -34,13 +31,6 @@
         "language": "sbatch",
         "scopeName": "source.sbatch",
         "path": "./syntaxes/sbatch.tmLanguage.json"
-      }
-    ],
-    "iconThemes": [
-      {
-        "id": "customFileIcons",
-        "label": "HPC File Icons",
-        "path": "./images/file-icon-theme.json"
       }
     ],
     "commands": [

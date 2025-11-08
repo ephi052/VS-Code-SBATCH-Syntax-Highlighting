@@ -8,13 +8,10 @@ This extension provides syntax highlighting and job submission features for `.sb
 - Syntax highlighting for `.sbatch` files, including differentiation between active `#SBATCH` commands and commented `##SBATCH` lines.
 - Right-click on `.sbatch` files to submit a SLURM job directly from VS Code.
 - File icon for `.sbatch` files for easy identification.
-- File icons for most common file types used in HPC.
-- Default Icon for unknown file types.
-- Folder Icon for directories.
 
 ## Installation
 - Install the extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=EphiCohen.sbatch).
-- For icon support, on the extension installation page, click on the **Set icon theme** button and select the HPC Icon Theme.
+
 
 ## How to Use
 
