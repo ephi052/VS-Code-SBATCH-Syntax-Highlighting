@@ -25,8 +25,8 @@ This extension provides syntax highlighting and job submission features for `.sb
 
 ![Syntax Highlighting](https://github.com/ephi052/VS-Code-SBATCH-Syntax-Highlighting/blob/main/images/syntax-highlighting.png)
 
-- Active `#SBATCH` commands are highlighted in **purple**.
-- Commented `##SBATCH` lines are highlighted in **blue**.
+- Active `#SBATCH` commands are highlighted in **blue** with syntax highlighting for arguments, strings, and values.
+- Commented `##SBATCH` lines are highlighted in **blue** (entire line).
 - General comments are highlighted in **green**.
 - The rest of the text follows standard **bash** syntax colors.
 
