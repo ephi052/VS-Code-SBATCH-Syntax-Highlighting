@@ -7,7 +7,7 @@ This extension provides syntax highlighting and job submission features for `.sb
 
 - Syntax highlighting for `.sbatch` files, including differentiation between active `#SBATCH` commands and commented `##SBATCH` lines.
 - Right-click on `.sbatch` files to submit a SLURM job directly from VS Code.
-- Right-click on `.sbatch` files to list all jobs (active and historical) submitted from that file.
+- Right-click on `.sbatch` files to list all jobs (active and last day of history) submitted from that file.
 - File icon for `.sbatch` files for easy identification.
 
 ## Installation
@@ -19,7 +19,7 @@ This extension provides syntax highlighting and job submission features for `.sb
 1. Open any `.sbatch` file in VS Code to see syntax highlighting.
 2. Right-click on the `.sbatch` file in the file explorer and select:
    - **Submit a SLURM Job from This File** to submit the job
-   - **List Submitted Jobs from This File** to view active and historical jobs from this script
+   - **List Submitted Jobs from This File** to view active jobs and last day of history from this script
 
 ### Syntax Highlighting
 
@@ -34,7 +34,7 @@ This extension provides syntax highlighting and job submission features for `.sb
 
 ![List Jobs](https://github.com/ephi052/VS-Code-SBATCH-Syntax-Highlighting/blob/main/images/list-jobs.png)
 
-View all SLURM jobs (active and historical) submitted from a specific `.sbatch` file. Click on active job rows to cancel them with `scancel`.
+View SLURM jobs submitted from a specific `.sbatch` file - all active jobs plus the last day of history. Click on active job rows to cancel them with `scancel`.
 
 ## Requirements
 
