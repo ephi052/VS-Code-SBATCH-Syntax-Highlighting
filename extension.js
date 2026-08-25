@@ -28,6 +28,13 @@ const {
 const REFRESH_MS = 1000; // auto-refresh interval for the job list
 const SACCT_CACHE_MS = 10000; // history is stable; don't hammer sacct every second
 
+/** Read the sbatch.commandTimeoutMs setting (fallback 30s). */
+function commandTimeoutMs() {
+    return vscode.workspace
+        .getConfiguration('sbatch')
+        .get('commandTimeoutMs', 30000);
+}
+
 // Period preset -> sacct --starttime value
 const RANGE_TO_STARTTIME = {
     '24h': 'now-24hours',
@@ -105,7 +112,9 @@ async function getHistoryResult(filters) {
         return sacctCache.result;
     }
 
-    const result = await runCommand('sacct', args);
+    const result = await runCommand('sacct', args, {
+        timeoutMs: commandTimeoutMs(),
+    });
     sacctCache = { key, time: now, result };
     return result;
 }
@@ -197,7 +206,10 @@ async function submitSlurmJob(uri) {
         },
         // Only the submission itself is tracked, so the progress notification
         // disappears as soon as sbatch returns (it must not wrap the popups).
-        () => runCommand('sbatch', [filePath], { cwd: scriptDir })
+        () => runCommand('sbatch', [filePath], {
+            cwd: scriptDir,
+            timeoutMs: commandTimeoutMs(),
+        })
     )
         .then(async (result) => {
             if (result.code !== 0) {
@@ -316,7 +328,9 @@ async function listSubmittedJobs(uri) {
 
         try {
             const [activeRes, historyRes] = await Promise.all([
-                runCommand('squeue', SQUEUE_ARGS),
+                runCommand('squeue', SQUEUE_ARGS, {
+                    timeoutMs: commandTimeoutMs(),
+                }),
                 getHistoryResult(currentFilters),
             ]);
 
@@ -460,7 +474,9 @@ async function listSubmittedJobs(uri) {
             }
 
             try {
-                const res = await runCommand('scancel', [jobId]);
+                const res = await runCommand('scancel', [jobId], {
+                    timeoutMs: commandTimeoutMs(),
+                });
 
                 if (res.code === 0) {
                     vscode.window.showInformationMessage(
