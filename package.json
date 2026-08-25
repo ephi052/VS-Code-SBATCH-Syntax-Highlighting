@@ -22,6 +22,17 @@
   "pricing": "Free",
   "qna": "marketplace",
   "contributes": {
+    "configuration": {
+      "title": "SBATCH",
+      "properties": {
+        "sbatch.commandTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "minimum": 100,
+          "description": "Maximum time (ms) a SLURM command may run before it is killed and reported as timed out."
+        }
+      }
+    },
     "languages": [
       {
         "id": "sbatch",

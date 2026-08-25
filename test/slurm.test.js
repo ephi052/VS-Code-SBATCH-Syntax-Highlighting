@@ -264,6 +264,16 @@ test('runCommand rejects when the binary does not exist', async () => {
     );
 });
 
+test('runCommand rejects when the command exceeds the timeout', async () => {
+    const start = Date.now();
+    await assert.rejects(
+        runCommand('sleep', ['10'], { timeoutMs: 200 }),
+        /timed out after 200ms/
+    );
+    // the timeout must fire promptly, not after the sleep finishes
+    assert.ok(Date.now() - start < 5000, 'timeout must fire promptly');
+});
+
 test('findLogPaths parses space and equals forms', () => {
     const script = [
         '#SBATCH --output job-%j.out',
