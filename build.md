@@ -4,14 +4,15 @@ This extension provides syntax highlighting and job submission features for `.sb
 
 ## Pre-requisites
 
-- [Node.js](https://nodejs.org/en/download/)
+- [Node.js](https://nodejs.org/en/download/) 18 or newer
 - [VS Code](https://code.visualstudio.com/download)
 
 ## Build Instructions
 
 1. Clone the repository.
 2. Run `npm install` to install the dependencies.
-3. Run `npx vsce package` to create the `.vsix` file (or install `vsce` globally with `npm install -g @vscode/vsce`).
+3. Run `npm test` and `npm run lint` to run the checks.
+4. Run `npm run package` to create the `.vsix` file (wraps `npx vsce package`).
 
 ## Installation
 
@@ -25,3 +26,7 @@ This extension provides syntax highlighting and job submission features for `.sb
 2. Right-click on the `.sbatch` file in the file explorer and select:
    - **Submit a SLURM Job from This File** to submit the job via `sbatch`
    - **List Submitted Jobs from This File** to view active and historical jobs from this script
+
+## Testing on a remote host
+
+If you develop on your laptop but SLURM lives on a login node, open this repository with the **Remote - SSH** extension and run the **Extension** launch config (F5) from the remote window. The Extension Development Host then runs on the remote machine, where `sbatch`/`squeue`/`sacct`/`scancel` are available.

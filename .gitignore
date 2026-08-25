@@ -7,9 +7,6 @@ node_modules/
 # Ignore the extension package file
 *.vsix
 
-# Ignore lock files
-package-lock.json
-
 # Ignore TypeScript output if any JS or map files are generated
 *.js.map
 

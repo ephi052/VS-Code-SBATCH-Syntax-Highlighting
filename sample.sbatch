@@ -50,6 +50,17 @@
 
 # You may not place any commands before the last SBATCH directive
 
+# Semantic showcase (v0.0.3 option-aware grammar)
+#SBATCH --time=1-00:00:00
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:a100:2
+#SBATCH --nodes=1-2
+#SBATCH --cpus-per-task=6
+#SBATCH --output=logs/job-%j.out
+#SBATCH --error=logs/job-%j.err
+#SBATCH --mail-type=END,FAIL
+#SBATCH --export=ALL,$SLURM_JOBID
+
 # Define and create a unique scratch directory for this job
 SCRATCH_DIRECTORY=/global/work/${USER}/${SLURM_JOBID}.stallo-adm.uit.no
 mkdir -p ${SCRATCH_DIRECTORY}
