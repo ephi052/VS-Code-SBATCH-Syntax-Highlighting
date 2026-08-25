@@ -1,386 +1,501 @@
-const vscode = require('vscode');
-const { exec } = require('child_process');
-const path = require('path');
+'use strict';
 
-// Run a shell command and return { stdout, stderr, code }
-function runCommand(cmd) {
-    return new Promise((resolve) => {
-        exec(cmd, { shell: '/bin/bash' }, (error, stdout, stderr) => {
-            resolve({
-                stdout: (stdout || '').trim(),
-                stderr: (stderr || '').trim(),
-                code: error ? error.code : 0,
-            });
+const vscode = require('vscode');
+const path = require('path');
+const fs = require('fs');
+
+const {
+    runCommand,
+    parseActiveJobs,
+    parseHistoryJobs,
+    filterJobsByState,
+    dedupeAgainstActive,
+    lintSbatch,
+    isValidJobId,
+    findLogPaths,
+} = require('./lib/slurm.js');
+const {
+    getWebviewContent,
+    PERIOD_LABELS,
+    DEFAULT_FILTERS,
+} = require('./lib/webview.js');
+const {
+    initCacheDir,
+    readCachedPayload,
+    writeCachedPayload,
+} = require('./lib/cache.js');
+
+const REFRESH_MS = 1000; // auto-refresh interval for the job list
+const SACCT_CACHE_MS = 10000; // history is stable; don't hammer sacct every second
+
+// Period preset -> sacct --starttime value
+const RANGE_TO_STARTTIME = {
+    '24h': 'now-24hours',
+    '7d': 'now-7days',
+    '30d': 'now-30days',
+    all: '1970-01-01',
+};
+
+const SACCT_FORMAT =
+    'JobIDRaw,Partition,JobName,User,State,Elapsed,NNodes,NodeList,SubmitLine,Start,End,ExitCode,TimeLimit,WorkDir';
+
+const SQUEUE_ARGS = [
+    '--me',
+    '--noheader',
+    '--format=%i|%P|%j|%u|%t|%M|%D|%R|%Z|%o',
+];
+
+/** Build sacct arguments for the requested period (filters.range). */
+function buildSacctArgs(filters) {
+    const args = ['--noheader', '--parsable2', `--format=${SACCT_FORMAT}`];
+    const range = filters.range || DEFAULT_FILTERS.range;
+
+    if (range === 'custom') {
+        if (filters.startDate) {
+            args.push(`--starttime=${filters.startDate}`);
+        }
+        if (filters.endDate) {
+            args.push(`--endtime=${filters.endDate}`);
+        }
+    } else {
+        args.push(
+            `--starttime=${RANGE_TO_STARTTIME[range] || RANGE_TO_STARTTIME['7d']}`
+        );
+    }
+
+    return args;
+}
+
+// Cached sacct result: history changes slowly, so re-query at most every
+// SACCT_CACHE_MS. The cache key includes the sacct arguments, so changing
+// the period/state filters invalidates it automatically.
+let sacctCache = { key: '', time: 0, result: null };
+
+/**
+ * Resolve the log/error file paths for a job id of the given script, using
+ * the script's #SBATCH --output/--error directives (with %j/%J expansion)
+ * and falling back to slurm-<jobid>.out/.err next to the script.
+ */
+function getJobLogPaths(filePath, jobId) {
+    const scriptDir = path.dirname(filePath);
+    let scriptText = '';
+    try {
+        scriptText = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+        scriptText = '';
+    }
+
+    const logPaths = findLogPaths(scriptText, jobId, scriptDir);
+    return {
+        output:
+            logPaths.output ||
+            (jobId ? path.join(scriptDir, `slurm-${jobId}.out`) : ''),
+        error:
+            logPaths.error ||
+            (jobId ? path.join(scriptDir, `slurm-${jobId}.err`) : ''),
+    };
+}
+
+async function getHistoryResult(filters) {
+    const args = buildSacctArgs(filters);
+    const key = JSON.stringify(args);
+    const now = Date.now();
+
+    if (sacctCache.key === key && now - sacctCache.time < SACCT_CACHE_MS) {
+        return sacctCache.result;
+    }
+
+    const result = await runCommand('sacct', args);
+    sacctCache = { key, time: now, result };
+    return result;
+}
+
+/**
+ * Open a log file in the editor, but only if it is a real, readable file.
+ * Returns true when opened, false otherwise (and explains why).
+ */
+async function openLogFile(target) {
+    let isFile = false;
+    try {
+        isFile = !!target && fs.statSync(target).isFile();
+    } catch (err) {
+        isFile = false;
+    }
+
+    if (isFile) {
+        await vscode.window.showTextDocument(vscode.Uri.file(target));
+        return true;
+    }
+
+    vscode.window.showInformationMessage(
+        target
+            ? `Log file not created yet (${target}) — it appears once the job starts running.`
+            : 'Log file path is unknown for this submission.'
+    );
+    return false;
+}
+
+async function submitSlurmJob(uri) {
+    // Support invocation from a keybinding: use the active sbatch editor.
+    if (!uri) {
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document.languageId === 'sbatch') {
+            uri = editor.document.uri;
+        }
+    }
+
+    if (!uri) {
+        vscode.window.showErrorMessage('No file selected for submission.');
+        return;
+    }
+
+    const filePath = uri.fsPath;
+    const baseName = path.basename(filePath);
+    const scriptDir = path.dirname(filePath);
+
+    // Save any dirty editor for this file (active OR background tab) so the
+    // lint check and the sbatch call operate on the same contents the user
+    // sees, not stale disk state. Abort if the save fails.
+    const dirtyDoc = vscode.workspace.textDocuments.find(
+        (doc) => doc.uri.fsPath === filePath && doc.isDirty
+    );
+    if (dirtyDoc) {
+        const saved = await dirtyDoc.save();
+        if (!saved) {
+            vscode.window.showErrorMessage(
+                `Could not save ${baseName} before submission; aborting.`
+            );
+            return;
+        }
+    }
+
+    // ---- Lint the #SBATCH directives before submitting ----
+    let scriptText = '';
+    try {
+        scriptText = fs.readFileSync(filePath, 'utf8');
+    } catch (err) {
+        scriptText = '';
+    }
+    const issues = lintSbatch(scriptText);
+    if (issues.length) {
+        const details = issues.map((i) => `• ${i.message}`).join('\n');
+        const choice = await vscode.window.showWarningMessage(
+            `SBATCH lint found ${issues.length} issue(s):\n${details}`,
+            { modal: true },
+            'Submit Anyway',
+            'Cancel'
+        );
+        if (choice !== 'Submit Anyway') {
+            return;
+        }
+    }
+
+    await vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: `Submitting ${baseName} with sbatch…`,
+        },
+        // Only the submission itself is tracked, so the progress notification
+        // disappears as soon as sbatch returns (it must not wrap the popups).
+        () => runCommand('sbatch', [filePath], { cwd: scriptDir })
+    )
+        .then(async (result) => {
+            if (result.code !== 0) {
+                const errMsg =
+                    result.stderr || `sbatch exited with code ${result.code}.`;
+                const choice = await vscode.window.showErrorMessage(
+                    errMsg,
+                    'View Details'
+                );
+
+                if (choice === 'View Details') {
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: errMsg,
+                        language: 'plaintext',
+                    });
+                    await vscode.window.showTextDocument(doc);
+                }
+                return;
+            }
+
+            const jobIdMatch = (result.stdout || '').match(/(\d+)/);
+            const jobId = jobIdMatch ? jobIdMatch[1] : '';
+
+            const logPaths = getJobLogPaths(filePath, jobId);
+            const logPath = logPaths.output || logPaths.error;
+
+            const choice = await vscode.window.showInformationMessage(
+                result.stdout
+                    ? `${baseName}: ${result.stdout}`
+                    : `${baseName}: submitted successfully.`,
+                'Open Log',
+                'Open Folder'
+            );
+
+            if (choice === 'Open Log') {
+                await openLogFile(logPath);
+            } else if (choice === 'Open Folder') {
+                const folderUri = vscode.Uri.file(scriptDir);
+                if (vscode.workspace.getWorkspaceFolder(folderUri)) {
+                    await vscode.commands.executeCommand(
+                        'revealInExplorer',
+                        folderUri
+                    );
+                } else {
+                    vscode.window.showInformationMessage(
+                        `Script folder: ${scriptDir}`
+                    );
+                }
+            }
+        })
+        .catch((err) => {
+            vscode.window.showErrorMessage(err.message);
         });
+}
+
+async function listSubmittedJobs(uri) {
+    if (!uri) {
+        vscode.window.showErrorMessage('No file selected.');
+        return;
+    }
+
+    const filePath = uri.fsPath;
+    const baseName = path.basename(filePath);
+
+    const panel = vscode.window.createWebviewPanel(
+        'slurmJobs',
+        `SLURM Jobs – ${baseName}`,
+        vscode.ViewColumn.Active,
+        { enableScripts: true }
+    );
+
+    panel.webview.html = getWebviewContent(baseName, DEFAULT_FILTERS);
+
+    let currentFilters = Object.assign({}, DEFAULT_FILTERS);
+    let timer = null;
+    let busy = false;
+    let lastPayloadKey = '';
+
+    /** Paint instantly from the persistent cache (if it matches the filters). */
+    function serveCached() {
+        const cached = readCachedPayload(filePath, currentFilters);
+        if (cached) {
+            safePost({
+                type: 'jobs',
+                active: cached.active,
+                history: cached.history,
+                message: cached.message,
+                error: false,
+                periodLabel: cached.periodLabel,
+            });
+        }
+    }
+
+    function jobsKey(jobs) {
+        return jobs
+            .map((j) =>
+                [j.jobId, j.state, j.nnodes, j.nodelist, j.exitCode].join('|')
+            )
+            .sort()
+            .join('\n');
+    }
+
+    function safePost(message) {
+        try {
+            panel.webview.postMessage(message);
+        } catch (err) {
+            // Panel was disposed while a query was in flight.
+        }
+    }
+
+    async function tick(force) {
+        if (busy) {
+            return;
+        }
+        busy = true;
+
+        try {
+            const [activeRes, historyRes] = await Promise.all([
+                runCommand('squeue', SQUEUE_ARGS),
+                getHistoryResult(currentFilters),
+            ]);
+
+            const firstError =
+                (activeRes.code !== 0 && activeRes.stderr) ||
+                (historyRes.code !== 0 && historyRes.stderr);
+            if (firstError) {
+                throw new Error(firstError);
+            }
+
+            const activeJobs = filterJobsByState(
+                parseActiveJobs(activeRes.stdout, filePath),
+                currentFilters.state
+            );
+            const historyJobs = dedupeAgainstActive(
+                activeJobs,
+                filterJobsByState(
+                    parseHistoryJobs(historyRes.stdout, filePath),
+                    currentFilters.state
+                )
+            );
+
+            // Only push a payload when something meaningful changed
+            // (unless forced); elapsed time is tracked client-side.
+            const key =
+                jobsKey(activeJobs) + '###' + jobsKey(historyJobs);
+            if (!force && key === lastPayloadKey) {
+                return;
+            }
+            lastPayloadKey = key;
+
+            safePost({
+                type: 'jobs',
+                active: activeJobs,
+                history: historyJobs,
+                message: '',
+                error: false,
+                periodLabel:
+                    PERIOD_LABELS[currentFilters.range] ||
+                    PERIOD_LABELS['7d'],
+            });
+            writeCachedPayload(filePath, currentFilters, {
+                active: activeJobs,
+                history: historyJobs,
+                message: '',
+                periodLabel:
+                    PERIOD_LABELS[currentFilters.range] ||
+                    PERIOD_LABELS['7d'],
+            });
+        } catch (err) {
+            const key = 'ERR|' + err.message;
+            if (!force && key === lastPayloadKey) {
+                return;
+            }
+            lastPayloadKey = key;
+            safePost({
+                type: 'jobs',
+                active: [],
+                history: [],
+                message: err.message,
+                error: true,
+                periodLabel: '',
+            });
+        } finally {
+            busy = false;
+        }
+    }
+
+    function startTimer() {
+        if (!timer) {
+            timer = setInterval(tick, REFRESH_MS);
+        }
+    }
+
+    function stopTimer() {
+        if (timer) {
+            clearInterval(timer);
+            timer = null;
+        }
+    }
+
+    panel.onDidDispose(stopTimer);
+    panel.onDidChangeViewState((e) => {
+        if (e.webviewPanel.visible) {
+            // The webview may have been re-created while hidden (it would
+            // show its initial "Loading jobs…" state), so force a fresh
+            // payload even if the data itself has not changed.
+            lastPayloadKey = '';
+            serveCached();
+            startTimer();
+            tick();
+        } else {
+            stopTimer();
+        }
     });
+
+    panel.webview.onDidReceiveMessage(async (message) => {
+        if (message.type === 'ready') {
+            // Webview (re)loaded: paint from cache, then push fresh data.
+            serveCached();
+            await tick(true);
+        } else if (message.type === 'refresh') {
+            currentFilters = Object.assign(
+                {},
+                DEFAULT_FILTERS,
+                message.filters || {}
+            );
+            sacctCache.key = ''; // force a fresh sacct query for the new range
+            await tick();
+        } else if (message.type === 'submit') {
+            await submitSlurmJob(uri);
+            await tick(); // the new job should show up right away
+        } else if (message.type === 'openLog' || message.type === 'openError') {
+            const jobId = message.jobId;
+            if (!isValidJobId(jobId)) {
+                vscode.window.showErrorMessage(`Invalid job id: ${jobId}`);
+                return;
+            }
+
+            const paths = getJobLogPaths(filePath, jobId);
+            const target =
+                message.type === 'openLog' ? paths.output : paths.error;
+            await openLogFile(target);
+        } else if (message.type === 'cancel' && message.jobId) {
+            const jobId = message.jobId;
+
+            // Never pass an unvalidated job id to scancel.
+            if (!isValidJobId(jobId)) {
+                vscode.window.showErrorMessage(`Invalid job id: ${jobId}`);
+                return;
+            }
+            const confirm = await vscode.window.showWarningMessage(
+                `Cancel job ${jobId}?`,
+                { modal: true },
+                'Yes',
+                'No'
+            );
+
+            if (confirm !== 'Yes') {
+                return;
+            }
+
+            try {
+                const res = await runCommand('scancel', [jobId]);
+
+                if (res.code === 0) {
+                    vscode.window.showInformationMessage(
+                        `Job ${jobId} cancelled.`
+                    );
+                    await tick();
+                } else {
+                    vscode.window.showErrorMessage(
+                        res.stderr || `Failed to cancel job ${jobId}.`
+                    );
+                }
+            } catch (err) {
+                vscode.window.showErrorMessage(err.message);
+            }
+        }
+    });
+
+    startTimer();
+    serveCached();
+    await tick();
 }
 
 function activate(context) {
-    // === Submit SLURM job via sbatch ===
-    const submitDisposable = vscode.commands.registerCommand(
-        'sbatch.submitSlurmJob',
-        async (uri) => {
-            if (!uri) {
-                vscode.window.showErrorMessage('No file selected for submission.');
-                return;
-            }
+    initCacheDir(context.globalStorageUri.fsPath);
 
-            const filePath = uri.fsPath;
-            const safePath = filePath.replace(/"/g, '\\"');
-            const cmd = `sbatch "${safePath}"`;
-
-            const result = await runCommand(cmd);
-
-            if (result.stdout) {
-                vscode.window.showInformationMessage(result.stdout);
-            } else if (result.stderr) {
-                vscode.window.showErrorMessage(result.stderr);
-            } else {
-                vscode.window.showInformationMessage(
-                    `Submitted SLURM job from: ${filePath}`
-                );
-            }
-        }
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'sbatch.submitSlurmJob',
+            submitSlurmJob
+        ),
+        vscode.commands.registerCommand(
+            'sbatch.listSubmittedJobs',
+            listSubmittedJobs
+        )
     );
-
-    // === List jobs for this sbatch file in a Webview (with scancel) ===
-    const listJobsDisposable = vscode.commands.registerCommand(
-        'sbatch.listSubmittedJobs',
-        async (uri) => {
-            if (!uri) {
-                vscode.window.showErrorMessage('No file selected.');
-                return;
-            }
-
-            const filePath = uri.fsPath;
-            const safePath = filePath.replace(/"/g, '\\"');
-            const baseName = path.basename(filePath);
-
-            const panel = vscode.window.createWebviewPanel(
-                'slurmJobs',
-                `SLURM Jobs – ${baseName}`,
-                vscode.ViewColumn.Active,
-                { enableScripts: true }
-            );
-
-            async function refresh() {
-                // Active jobs: filter by %o (command) containing the sbatch path
-                const activeCmd = `
-FILE="${safePath}";
-squeue --me --format="%i|%P|%j|%u|%t|%M|%D|%R|%o" --noheader \
-| awk -F'|' -v f="$FILE" 'index($9, f) {
-    print $1"|"$2"|"$3"|"$4"|"$5"|"$6"|"$7"|"$8
-}'`.trim();
-
-                // History: filter by SubmitLine containing "sbatch <file>"
-                const historyCmd = `
-FILE="${safePath}";
-sacct --format="JobIDRaw,Partition,JobName,User,State,Elapsed,NNodes,NodeList,SubmitLine" --noheader --parsable2 \
-| awk -F'|' -v f="$FILE" 'index($9, "sbatch " f) {
-    print $1"|"$2"|"$3"|"$4"|"$5"|"$6"|"$7"|"$8
-}'`.trim();
-
-                const [activeRes, historyRes] = await Promise.all([
-                    runCommand(activeCmd),
-                    runCommand(historyCmd),
-                ]);
-
-                const activeJobs = parseJobs(activeRes.stdout, true);
-                const historyJobs = parseJobs(historyRes.stdout, false);
-
-                if (!activeJobs.length && !historyJobs.length) {
-                    panel.webview.html = getWebviewContent(
-                        baseName,
-                        [],
-                        [],
-                        'No SLURM jobs found for this file.'
-                    );
-                } else {
-                    panel.webview.html = getWebviewContent(
-                        baseName,
-                        activeJobs,
-                        historyJobs,
-                        ''
-                    );
-                }
-            }
-
-            // Handle messages from the webview
-            panel.webview.onDidReceiveMessage(async (message) => {
-                if (message.type === 'cancel' && message.jobId) {
-                    const jobId = message.jobId;
-
-                    const confirm = await vscode.window.showWarningMessage(
-                        `Cancel job ${jobId}?`,
-                        { modal: true },
-                        'Yes',
-                        'No'
-                    );
-
-                    if (confirm !== 'Yes') {
-                        return;
-                    }
-
-                    const res = await runCommand(`scancel ${jobId}`);
-
-                    if (res.code === 0) {
-                        vscode.window.showInformationMessage(
-                            `Job ${jobId} cancelled.`
-                        );
-                        await refresh();
-                    } else {
-                        const msg =
-                            res.stderr || `Failed to cancel job ${jobId}.`;
-                        vscode.window.showErrorMessage(msg);
-                    }
-                }
-
-                if (message.type === 'refresh') {
-                    await refresh();
-                }
-            });
-
-            // Initial load
-            await refresh();
-        }
-    );
-
-    context.subscriptions.push(submitDisposable, listJobsDisposable);
-}
-
-// Parse "a|b|c|..." into array of job objects
-function parseJobs(stdout, isActive) {
-    if (!stdout) return [];
-    return stdout
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => {
-            const [jobId, partition, jobName, user, state, elapsed, nnodes, nodelist] =
-                line.split('|');
-            return {
-                raw: line,
-                jobId: jobId || '',
-                partition: partition || '',
-                jobName: jobName || '',
-                user: user || '',
-                state: state || '',
-                elapsed: elapsed || '',
-                nnodes: nnodes || '',
-                nodelist: nodelist || '',
-                isActive: !!isActive,
-            };
-        });
-}
-
-// Build HTML for Webview
-function getWebviewContent(baseName, activeJobs, historyJobs, message) {
-    const escapeHtml = (str) =>
-        (str || '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-
-    const renderRows = (jobs, clickableActive) =>
-        jobs
-            .map((j) => {
-                const stateClass =
-                    j.state.startsWith('R') || j.state === 'RUNNING'
-                        ? 'state-running'
-                        : j.state.startsWith('C') || j.state === 'COMPLETED'
-                        ? 'state-completed'
-                        : j.state
-                        ? 'state-other'
-                        : '';
-
-                const attrs = [];
-                if (clickableActive && j.isActive && j.jobId) {
-                    attrs.push(`data-job-id="${escapeHtml(j.jobId)}"`);
-                    attrs.push('data-clickable="1"');
-                }
-
-                return `
-<tr class="${stateClass}" ${attrs.join(' ')}>
-  <td>${escapeHtml(j.jobId)}</td>
-  <td>${escapeHtml(j.partition)}</td>
-  <td>${escapeHtml(j.jobName)}</td>
-  <td>${escapeHtml(j.user)}</td>
-  <td>${escapeHtml(j.state)}</td>
-  <td>${escapeHtml(j.elapsed)}</td>
-  <td>${escapeHtml(j.nnodes)}</td>
-  <td>${escapeHtml(j.nodelist)}</td>
-</tr>`;
-            })
-            .join('\n');
-
-    const activeTable = activeJobs.length
-        ? `
-<h2>Active Jobs</h2>
-<table>
-  <thead>
-    <tr>
-      <th>JobID</th>
-      <th>Partition</th>
-      <th>JobName</th>
-      <th>User</th>
-      <th>State</th>
-      <th>Elapsed</th>
-      <th>Nodes</th>
-      <th>NodeList</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${renderRows(activeJobs, true)}
-  </tbody>
-</table>
-<div class="hint">Click an active job row to cancel it.</div>
-`
-        : `<p class="empty">No active jobs for this file.</p>`;
-
-    const historyTable = historyJobs.length
-        ? `
-<h2>Job History</h2>
-<table class="readonly">
-  <thead>
-    <tr>
-      <th>JobID</th>
-      <th>Partition</th>
-      <th>JobName</th>
-      <th>User</th>
-      <th>State</th>
-      <th>Elapsed</th>
-      <th>Nodes</th>
-      <th>NodeList</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${renderRows(historyJobs, false)}
-  </tbody>
-</table>
-<div class="hint readonly-hint">History rows are read-only.</div>
-`
-        : `<p class="empty">No past jobs for this file.</p>`;
-
-    const infoMsg = message
-        ? `<p class="message">${escapeHtml(message)}</p>`
-        : '';
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<title>SLURM Jobs – ${escapeHtml(baseName)}</title>
-<style>
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-        padding: 12px 16px 20px;
-        color: #e5e5e5;
-        background-color: #1e1e1e;
-    }
-    h1 {
-        font-size: 18px;
-        margin-bottom: 4px;
-    }
-    h2 {
-        font-size: 14px;
-        margin: 16px 0 4px;
-        color: #9cdcfe;
-    }
-    p.empty {
-        margin: 4px 0 12px;
-        color: #888;
-    }
-    p.message {
-        margin: 8px 0;
-        color: #ffcc66;
-    }
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-bottom: 6px;
-        font-size: 12px;
-    }
-    thead {
-        background-color: #252526;
-    }
-    th, td {
-        padding: 4px 6px;
-        border-bottom: 1px solid #333;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-        overflow: hidden;
-    }
-    tr[data-clickable="1"]:hover {
-        background-color: #2a2d2e;
-        cursor: pointer;
-    }
-    table.readonly tr:hover {
-        background-color: #252526;
-        cursor: default;
-    }
-    .state-running td {
-        color: #b5f38c;
-    }
-    .state-completed td {
-        color: #8ccea3;
-    }
-    .state-other td {
-        color: #ffcc66;
-    }
-    .hint {
-        font-size: 11px;
-        color: #777;
-        margin-bottom: 4px;
-    }
-    .readonly-hint {
-        opacity: 0.8;
-    }
-    .toolbar {
-        display: flex;
-        gap: 8px;
-        margin: 4px 0 8px;
-        font-size: 11px;
-    }
-    .btn {
-        padding: 2px 8px;
-        border-radius: 3px;
-        border: 1px solid #3a3a3a;
-        background: #2a2a2a;
-        color: #ccc;
-        cursor: pointer;
-    }
-    .btn:hover {
-        background: #333;
-    }
-</style>
-</head>
-<body>
-<h1>SLURM Jobs for <code>${escapeHtml(baseName)}</code></h1>
-<div class="toolbar">
-    <button class="btn" id="refreshBtn">Refresh</button>
-</div>
-${infoMsg}
-${activeTable}
-${historyTable}
-<script>
-    const vscode = acquireVsCodeApi();
-
-    // Clickable only for active rows (data-clickable="1")
-    document.querySelectorAll('tr[data-clickable="1"]').forEach(tr => {
-        tr.addEventListener('click', () => {
-            const jobId = tr.getAttribute('data-job-id');
-            if (jobId) {
-                vscode.postMessage({ type: 'cancel', jobId });
-            }
-        });
-    });
-
-    document.getElementById('refreshBtn').addEventListener('click', () => {
-        vscode.postMessage({ type: 'refresh' });
-    });
-</script>
-</body>
-</html>`;
 }
 
 function deactivate() {}
