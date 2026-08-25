@@ -11,7 +11,7 @@ This extension provides syntax highlighting and job submission features for `.sb
 
 1. Clone the repository.
 2. Run `npm install` to install the dependencies.
-3. Run `npm test` and `npm run lint` to run the checks.
+3. Run `npm test` and `npm run lint` to run the checks. CI (`.github/workflows/ci.yml`) runs these on every pull request.
 4. Run `npm run package` to create the `.vsix` file (wraps `npx vsce package`).
 
 ## Installation

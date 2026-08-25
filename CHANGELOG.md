@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.0.3] - 2026-08-12
+## [0.0.3] - 2026-08-25
 ### Fixed
 - **Cache scoped per script**: the job-list cache key now includes the script path, so opening a different `.sbatch` file can never briefly show (or allow cancelling) the previous file's jobs.
 - **Strict script matching**: job attribution now uses token-boundary matching (exact path, bare/relative/quoted basename). `run.sbatch.backup` and same-named scripts in other directories no longer produce false positives.

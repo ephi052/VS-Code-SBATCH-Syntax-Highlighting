@@ -1,39 +1,26 @@
-# Welcome to the SBATCH Syntax Highlighting Extension
+# SBATCH Extension — Developer Quickstart
 
-## What's in the folder
+Everything you need to build, run, and test this extension in development.
 
-* This folder contains all of the files necessary for your extension.
-* `package.json` - manifest file declaring language support, commands, and grammar location.
-* `syntaxes/sbatch.tmLanguage.json` - TextMate grammar file for tokenization with improved directive argument parsing.
-* `language-configuration.json` - language configuration defining tokens for comments and brackets.
-* `extension.js` - JavaScript runtime for commands (submit job, list jobs with webview).
-* `images/` - icons and screenshots for the extension.
+## Structure
 
-## Get up and running straight away
+- `package.json` — manifest: language, grammar, commands, keybinding, activation
+- `syntaxes/sbatch.tmLanguage.json` — TextMate grammar (seven semantic categories, option-aware values)
+- `language-configuration.json` — `#` line comment, brackets, auto-closing pairs
+- `extension.js` — commands: submit, list jobs (webview), Shift+Enter
+- `lib/` — `slurm.js` (spawn runner, parsers, lint, validation), `webview.js` (live job list), `cache.js` (per-file cache)
+- `test/` — unit tests (node:test); run with `npm test`
 
-* Make sure the language configuration settings in `language-configuration.json` are accurate.
-* Press `F5` to open a new window with your extension loaded.
-* Create a new `.sbatch` file to test syntax highlighting.
-* Verify that syntax highlighting works for `#SBATCH` directives, arguments, strings, and placeholders.
-* Test the right-click context menu commands on `.sbatch` files.
+## Run it
 
-## Make changes
+1. `npm install`
+2. Open the repo folder and press `F5` (Extension Development Host)
+3. Open `sample.sbatch` to see the highlighting; right-click → **Submit a SLURM Job** / **List Submitted Jobs**
 
-* You can relaunch the extension from the debug toolbar after making changes to the files listed above.
-* You can also reload (`Ctrl+R` or `Cmd+R` on Mac) the VS Code window with your extension to load your changes.
+## Checks & release
 
-## Features
+- `npm test` (44 tests) · `npm run lint` · `npm run package` → `sbatch-<version>.vsix`
+- CI runs `lint` + `test` on every PR (`.github/workflows/ci.yml`); `main` is protected (PRs only)
+- Publish to the Marketplace: `vsce publish` (publisher token required)
 
-- **Syntax Highlighting**: Enhanced parsing of SLURM directives with argument, string, and placeholder support
-- **Job Submission**: Right-click command to submit jobs via `sbatch`
-- **Job Management**: Interactive webview to list active and historical jobs with ability to cancel active jobs
-
-## Add more language features
-
-* To add features such as IntelliSense, hovers and validators check out the VS Code extenders documentation at https://code.visualstudio.com/docs
-
-## Install your extension
-
-* To start using your extension with Visual Studio Code, run `npx vsce package` to create a `.vsix` file.
-* Install via Extensions view > `...` > Install from VSIX.
-* To share your extension with the world, read on https://code.visualstudio.com/docs about publishing an extension.
+See README.md for usage and CHANGELOG.md for history.
