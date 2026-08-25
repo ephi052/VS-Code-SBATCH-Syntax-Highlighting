@@ -6,4 +6,5 @@ node_modules/
 .git/
 test/
 .eslintrc.json
+vsc-extension-quickstart.md
 *.vsix
