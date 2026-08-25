@@ -30,6 +30,55 @@
           "default": 30000,
           "minimum": 100,
           "description": "Maximum time (ms) a SLURM command may run before it is killed and reported as timed out."
+        },
+        "sbatch.refreshIntervalMs": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 250,
+          "description": "How often the job list auto-refreshes (ms)."
+        },
+        "sbatch.sacctCacheMs": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "description": "How long sacct history results are cached before re-querying (ms)."
+        },
+        "sbatch.userFilter": {
+          "type": "string",
+          "enum": ["me", "all"],
+          "default": "me",
+          "description": "Which user's jobs are listed. 'all' shows every user's jobs (requires cluster permission)."
+        },
+        "sbatch.sinfoArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Extra arguments passed to sinfo (used by live completion)."
+        },
+        "sbatch.sbatchPath": {
+          "type": "string",
+          "default": "sbatch",
+          "description": "Path to the sbatch binary."
+        },
+        "sbatch.squeuePath": {
+          "type": "string",
+          "default": "squeue",
+          "description": "Path to the squeue binary."
+        },
+        "sbatch.sacctPath": {
+          "type": "string",
+          "default": "sacct",
+          "description": "Path to the sacct binary."
+        },
+        "sbatch.scancelPath": {
+          "type": "string",
+          "default": "scancel",
+          "description": "Path to the scancel binary."
+        },
+        "sbatch.sinfoPath": {
+          "type": "string",
+          "default": "sinfo",
+          "description": "Path to the sinfo binary."
         }
       }
     },
