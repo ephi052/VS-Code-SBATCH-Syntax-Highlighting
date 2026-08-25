@@ -24,16 +24,7 @@ const {
     readCachedPayload,
     writeCachedPayload,
 } = require('./lib/cache.js');
-
-const REFRESH_MS = 1000; // auto-refresh interval for the job list
-const SACCT_CACHE_MS = 10000; // history is stable; don't hammer sacct every second
-
-/** Read the sbatch.commandTimeoutMs setting (fallback 30s). */
-function commandTimeoutMs() {
-    return vscode.workspace
-        .getConfiguration('sbatch')
-        .get('commandTimeoutMs', 30000);
-}
+const config = require('./lib/config.js');
 
 // Period preset -> sacct --starttime value
 const RANGE_TO_STARTTIME = {
@@ -46,11 +37,11 @@ const RANGE_TO_STARTTIME = {
 const SACCT_FORMAT =
     'JobIDRaw,Partition,JobName,User,State,Elapsed,NNodes,NodeList,SubmitLine,Start,End,ExitCode,TimeLimit,WorkDir';
 
-const SQUEUE_ARGS = [
-    '--me',
-    '--noheader',
-    '--format=%i|%P|%j|%u|%t|%M|%D|%R|%Z|%o',
-];
+/** squeue args honoring the sbatch.userFilter setting ('me' or 'all'). */
+function squeueArgs() {
+    const base = ['--noheader', '--format=%i|%P|%j|%u|%t|%M|%D|%R|%Z|%o'];
+    return config.userFilter() === 'all' ? ['-a', ...base] : ['--me', ...base];
+}
 
 /** Build sacct arguments for the requested period (filters.range). */
 function buildSacctArgs(filters) {
@@ -74,8 +65,8 @@ function buildSacctArgs(filters) {
 }
 
 // Cached sacct result: history changes slowly, so re-query at most every
-// SACCT_CACHE_MS. The cache key includes the sacct arguments, so changing
-// the period/state filters invalidates it automatically.
+// sbatch.sacctCacheMs. The cache key includes the sacct arguments, so
+// changing the period/state filters invalidates it automatically.
 let sacctCache = { key: '', time: 0, result: null };
 
 /**
@@ -108,12 +99,12 @@ async function getHistoryResult(filters) {
     const key = JSON.stringify(args);
     const now = Date.now();
 
-    if (sacctCache.key === key && now - sacctCache.time < SACCT_CACHE_MS) {
+    if (sacctCache.key === key && now - sacctCache.time < config.sacctCacheMs()) {
         return sacctCache.result;
     }
 
-    const result = await runCommand('sacct', args, {
-        timeoutMs: commandTimeoutMs(),
+    const result = await runCommand(config.binary('sacct'), args, {
+        timeoutMs: config.commandTimeoutMs(),
     });
     sacctCache = { key, time: now, result };
     return result;
@@ -206,9 +197,9 @@ async function submitSlurmJob(uri) {
         },
         // Only the submission itself is tracked, so the progress notification
         // disappears as soon as sbatch returns (it must not wrap the popups).
-        () => runCommand('sbatch', [filePath], {
+        () => runCommand(config.binary('sbatch'), [filePath], {
             cwd: scriptDir,
-            timeoutMs: commandTimeoutMs(),
+            timeoutMs: config.commandTimeoutMs(),
         })
     )
         .then(async (result) => {
@@ -328,8 +319,8 @@ async function listSubmittedJobs(uri) {
 
         try {
             const [activeRes, historyRes] = await Promise.all([
-                runCommand('squeue', SQUEUE_ARGS, {
-                    timeoutMs: commandTimeoutMs(),
+                runCommand(config.binary('squeue'), squeueArgs(), {
+                    timeoutMs: config.commandTimeoutMs(),
                 }),
                 getHistoryResult(currentFilters),
             ]);
@@ -401,7 +392,7 @@ async function listSubmittedJobs(uri) {
 
     function startTimer() {
         if (!timer) {
-            timer = setInterval(tick, REFRESH_MS);
+            timer = setInterval(tick, config.refreshIntervalMs());
         }
     }
 
@@ -412,7 +403,20 @@ async function listSubmittedJobs(uri) {
         }
     }
 
-    panel.onDidDispose(stopTimer);
+    // Restart the timer when sbatch settings change (e.g. refresh interval),
+    // so settings take effect without reloading the window.
+    const configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('sbatch')) {
+            stopTimer();
+            startTimer();
+            tick();
+        }
+    });
+
+    panel.onDidDispose(() => {
+        stopTimer();
+        configListener.dispose();
+    });
     panel.onDidChangeViewState((e) => {
         if (e.webviewPanel.visible) {
             // The webview may have been re-created while hidden (it would
@@ -474,8 +478,8 @@ async function listSubmittedJobs(uri) {
             }
 
             try {
-                const res = await runCommand('scancel', [jobId], {
-                    timeoutMs: commandTimeoutMs(),
+                const res = await runCommand(config.binary('scancel'), [jobId], {
+                    timeoutMs: config.commandTimeoutMs(),
                 });
 
                 if (res.code === 0) {
